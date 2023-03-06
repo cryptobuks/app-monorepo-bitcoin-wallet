@@ -11,7 +11,7 @@ if (process.env.EXT_BUILD_BROWSER === 'firefox') {
   // manifest v2
   browserManifest = chromeManifest;
   // manifest v3
-  // browserManifest = chromeManifestV3;
+  browserManifest = chromeManifestV3;
 }
 
 module.exports = lodash.merge(
