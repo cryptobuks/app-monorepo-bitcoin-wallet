@@ -44,6 +44,7 @@ object NfcUtils {
         return arrayOf(
             IntentFilter(NfcAdapter.ACTION_NDEF_DISCOVERED, "*/*"),
             IntentFilter(NfcAdapter.ACTION_TECH_DISCOVERED),
+            IntentFilter(NfcAdapter.ACTION_TAG_DISCOVERED),
         )
     }
 

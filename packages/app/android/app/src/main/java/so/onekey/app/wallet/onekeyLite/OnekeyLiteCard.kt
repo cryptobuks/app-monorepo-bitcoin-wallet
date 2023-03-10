@@ -9,13 +9,12 @@ import kotlinx.coroutines.withContext
 import so.onekey.app.wallet.nfc.NFCExceptions
 import so.onekey.app.wallet.nfc.NfcUtils
 import so.onekey.app.wallet.onekeyLite.entitys.CardState
-import so.onekey.app.wallet.reactModule.OKLiteManager
-import so.onekey.app.wallet.utils.HexUtils
 import so.onekey.app.wallet.utils.NfcPermissionUtils
 
 object OnekeyLiteCard {
     const val TAG = "OnekeyLiteCard"
 
+    var mCardManager: IAppletBackupCard? = null
 
     suspend fun startNfc(activity: FragmentActivity, callback: ((Boolean) -> Unit)? = null) =
         withContext(Dispatchers.Main) {
@@ -55,7 +54,18 @@ object OnekeyLiteCard {
         if (isoDep == null) {
             throw NFCExceptions.ConnectionFailException()
         }
-        return@withContext when (NfcCommand.initChannel(isoDep)) {
+        val atr = NfcCommand.readAid(isoDep)
+        Log.d(NfcCommand.LITE_TAG, " connect tag atr ----> $atr")
+
+        mCardManager = if ("6A82" == atr?.trim()) {
+            Log.d(NfcCommand.LITE_TAG, " connect AppletBackupCardV2")
+            AppletBackupCardV2()
+        } else {
+            Log.d(NfcCommand.LITE_TAG, " connect AppletBackupCard")
+            AppletBackupCard()
+        }
+
+        return@withContext when (mCardManager?.initChannel(isoDep)) {
             NfcCommand.INIT_CHANNEL_SUCCESS -> {
                 startConnectCommand(isoDep)
             }
@@ -68,7 +78,7 @@ object OnekeyLiteCard {
 
     suspend fun startConnectCommand(isoDep: IsoDep, startConnected: Boolean = true) =
         withContext(Dispatchers.IO) {
-            val selected = NfcCommand.selectBackupApp(isoDep)
+            val selected = mCardManager?.selectBackupApp(isoDep) ?: false
             if (!selected) {
                 throw NFCExceptions.ConnectionFailException()
             }
@@ -78,43 +88,27 @@ object OnekeyLiteCard {
 
     @Throws(NFCExceptions::class)
     private fun hasBackup(isoDep: IsoDep): Boolean {
-        val backupStatus = NfcCommand.hasBackUpCommand()
-        if (backupStatus.isNullOrEmpty()) {
-            throw NFCExceptions.ConnectionFailException()
-        }
-        return NfcCommand.send(isoDep, backupStatus) == NfcCommand.HAS_BACK_UP
-    }
-
-    @Throws(NFCExceptions::class)
-    private fun isNewCard(isoDep: IsoDep): Boolean {
-        val apdu = NfcCommand.isNewCardCommand()
-        val status = NfcCommand.send(isoDep, apdu)
-        if (status.isNullOrEmpty()) {
-            throw NFCExceptions.ConnectionFailException()
-        }
-        return NfcCommand.NEW_PIN == status
+        return mCardManager?.hasBackup(isoDep) ?: throw NFCExceptions.ConnectionFailException()
     }
 
     private fun getCardSerialNum(isoDep: IsoDep): String {
-        val command = NfcCommand.getCardSerialNumCommand()
-        val tempCardId = NfcCommand.send(isoDep, command)
-        if (tempCardId.isNullOrEmpty() || !tempCardId.endsWith(NfcCommand.STATUS_SUCCESS) || tempCardId.length < 4) {
-            throw NFCExceptions.InputPasswordEmptyException()
-        }
-        return String(HexUtils.hexString2Bytes(tempCardId.substring(0, tempCardId.length - 4)))
+//        val command = mCardManager?.getCardSerialNumCommand()
+//        val tempCardId = send(isoDep, command)
+//        Log.d(TAG, "getCardSerialNum----> $tempCardId")
+//        if (tempCardId.isNullOrEmpty() || !tempCardId.endsWith(NfcCommand.STATUS_SUCCESS) || tempCardId.length < 4) {
+//            throw NFCExceptions.InputPasswordEmptyException()
+//        }
+//        return String(HexUtils.hexString2Bytes(tempCardId.substring(0, tempCardId.length - 4)))
+        return "Lite"
     }
 
     @Throws(NFCExceptions::class)
-    fun setPinBackupRequest(isoDep: IsoDep, pin: String?): Boolean {
+    private fun setupNewPinRequest(isoDep: IsoDep, pin: String?): Boolean {
         if (pin.isNullOrEmpty()) {
             throw NFCExceptions.InputPasswordEmptyException()
         }
-        val verifyPinInitCommand = NfcCommand.verifyPinInitCommand(isoDep)
-        if (!verifyPinInitCommand) {
-            throw NFCExceptions.InterruptException()
-        }
 
-        return NfcCommand.setupPinCommand(isoDep, pin)
+        return mCardManager?.setupNewPin(isoDep, pin) ?: false
     }
 
     @Throws(NFCExceptions::class)
@@ -122,12 +116,12 @@ object OnekeyLiteCard {
         if (oldPwd.isNullOrEmpty()) {
             throw NFCExceptions.InputPasswordEmptyException()
         }
-        val verifyPinInitCommand = NfcCommand.verifyPinInitCommand(isoDep)
-        if (!verifyPinInitCommand) {
+        val checkPinInitialized = mCardManager?.checkPinInitialized(isoDep) ?: false
+        if (!checkPinInitialized) {
             throw NFCExceptions.InterruptException()
         }
 
-        return NfcCommand.changePinCommand(isoDep, oldPwd, newPwd)
+        return mCardManager?.changePin(isoDep, oldPwd, newPwd) ?: 0
     }
 
     @Throws(NFCExceptions::class)
@@ -135,17 +129,19 @@ object OnekeyLiteCard {
         if (verifyPin.isNullOrEmpty()) {
             throw NFCExceptions.InputPasswordEmptyException()
         }
-        val verifyPinInitCommand = NfcCommand.verifyPinInitCommand(isoDep)
+        val verifyPinInitCommand = mCardManager?.checkPinInitialized(isoDep) ?: false
+        Log.d(TAG, "verifyPinBackupRequest: $verifyPinInitCommand")
+
         if (!verifyPinInitCommand) {
             throw NFCExceptions.InterruptException()
         }
 
-        return NfcCommand.startVerifyPinCommand(isoDep, verifyPin)
+        return mCardManager?.startVerifyPin(isoDep, verifyPin) ?: 0
     }
 
     @Throws(NFCExceptions::class)
     fun getCardName(isoDep: IsoDep): String {
-        val cardInfo = NfcCommand.getCardName(isoDep)
+        val cardInfo = mCardManager?.getCardName(isoDep)
         if (cardInfo.isNullOrEmpty() || cardInfo == NfcCommand.NOT_MATCH_DEVICE) {
             throw NFCExceptions.InterruptException()
         }
@@ -155,27 +151,19 @@ object OnekeyLiteCard {
     @Throws(NFCExceptions::class)
     fun getCardInfo(isoDep: IsoDep): CardState {
         val hasBackup = hasBackup(isoDep)
-        val selectIssuerSd = NfcCommand.selectIssuerSd(isoDep)
-        if (!selectIssuerSd) {
-            throw NFCExceptions.ConnectionFailException()
-        }
 
-        val apdu = NfcCommand.isNewCardCommand()
-        val status = NfcCommand.send(isoDep, apdu)
-        if (status.isNullOrEmpty()) {
-            throw NFCExceptions.ConnectionFailException()
-        }
-
-        val needNewPIN = NfcCommand.NEW_PIN == status
+        val needNewPIN =  mCardManager?.isNewCard(isoDep) ?: throw NFCExceptions.ConnectionFailException()
         val serialNum = getCardSerialNum(isoDep)
         Log.d(TAG, "hasBack----${hasBackup}    needNewPIN-->${needNewPIN}")
         if (serialNum.isNullOrEmpty()) {
             throw NFCExceptions.ConnectionFailException()
         }
 
-        val pinRetryCount = NfcCommand.getRetryCount(isoDep)
+        val pinRetryCount = mCardManager?.getRetryCount(isoDep)
 
-        return CardState(hasBackup, needNewPIN, serialNum, pinRetryCount)
+
+        Log.d(TAG, "getCardInfo:  hasBackup----> ${hasBackup}  needNewPIN-->${needNewPIN}  serialNum-->${serialNum}")
+        return CardState(hasBackup, needNewPIN, serialNum, pinRetryCount ?: 0)
     }
 
     @Throws(NFCExceptions::class)
@@ -187,7 +175,7 @@ object OnekeyLiteCard {
         overwrite: Boolean = false,
         isBackup: Boolean = true
     ): Boolean {
-        if (cardState == null) throw  NFCExceptions.ConnectionFailException()
+        if (cardState == null) throw NFCExceptions.ConnectionFailException()
 
         if (!overwrite) {
             // 不是覆写要验证是否已经已经存有备份
@@ -195,12 +183,14 @@ object OnekeyLiteCard {
                 throw NFCExceptions.InitializedException()
             }
         }
+
         if (cardState.isNewCard) {
             // 如果是新卡设置密码
-            if (!setPinBackupRequest(isoDep, pwd)) {
+            if (!setupNewPinRequest(isoDep, pwd)) {
                 throw NFCExceptions.InitPasswordException()
             }
         }
+
         val verifyPin = verifyPinBackupRequest(isoDep, pwd)
         Log.d("verifyPinBackupRequest", "getMnemonicWithPin ${verifyPin}")
         if (verifyPin != NfcCommand.VERIFY_SUCCESS) {
@@ -236,12 +226,12 @@ object OnekeyLiteCard {
                 throw NFCExceptions.InitPasswordException()
             }
         }
-        return NfcCommand.startBackupCommand(isoDep, isBackup, mnemonic)
+        return mCardManager?.backupData(isoDep, isBackup, mnemonic) == true
     }
 
     @Throws(NFCExceptions::class)
     fun getMnemonicWithPin(cardState: CardState?, isoDep: IsoDep, pwd: String): String {
-        if (cardState == null) throw  NFCExceptions.ConnectionFailException()
+        if (cardState == null) throw NFCExceptions.ConnectionFailException()
 
         if (cardState.isNewCard || (!cardState.isNewCard && !cardState.hasBackup)) {
             throw NFCExceptions.NotInitializedException()
@@ -279,7 +269,7 @@ object OnekeyLiteCard {
             }
         }
 
-        val result = NfcCommand.exportCommand(isoDep)
+        val result = mCardManager?.exportData(isoDep)
 
         if (result.isNullOrEmpty()) {
             throw NFCExceptions.NotInitializedException()
@@ -289,7 +279,7 @@ object OnekeyLiteCard {
 
     @Throws(NFCExceptions::class)
     fun changPin(cardState: CardState?, isoDep: IsoDep, oldPwd: String, newPwd: String): Boolean {
-        if (cardState == null) throw  NFCExceptions.ConnectionFailException()
+        if (cardState == null) throw NFCExceptions.ConnectionFailException()
 
         if (cardState.isNewCard || (!cardState.isNewCard && !cardState.hasBackup)) {
             throw NFCExceptions.NotInitializedException()
@@ -331,6 +321,6 @@ object OnekeyLiteCard {
     }
 
     fun reset(isoDep: IsoDep): Boolean {
-        return NfcCommand.resetCommand(isoDep) == NfcCommand.RESET_PIN_SUCCESS
+        return mCardManager?.resetCard(isoDep) == NfcCommand.RESET_PIN_SUCCESS
     }
 }
