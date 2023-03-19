@@ -1,0 +1,1 @@
+(this.webpackJsonp=this.webpackJsonp||[]).push([[849],{4072:function(e,n,t){"use strict";t.r(n);var c=t(1),i=t(14);n.default=function(){return Object(c.useEffect)((function(){i.a.isWeb&&(window.location.href="/revoke")}),[]),null}}}]);
